@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="68dp"
+    android:height="68dp"
+    android:viewportWidth="68"
+    android:viewportHeight="68">
+    <!-- 圆形背景 -->
+    <path
+        android:fillColor="#FF6B9EF6"
+        android:pathData="M34,34m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0"/>
+    <!-- 相机图标 -->
+    <group
+        android:translateX="10"
+        android:translateY="10">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M24,24m-12,0a12,12 0,1 1,24 0a12,12 0,1 1,-24 0"/>
+        <path
+            android:fillColor="#FF6B9EF6"
+            android:pathData="M24,24m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0"/>
+    </group>
+</vector>

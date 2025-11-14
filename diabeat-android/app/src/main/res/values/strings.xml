@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DiabEat</string>
+    
+    <!-- 相机相关 -->
+    <string name="camera_permission_required">需要相机权限</string>
+    <string name="camera_permission_rationale">应用需要相机权限来拍摄食物照片</string>
+    
+    <!-- 用餐记录 -->
+    <string name="meal_record_title">用餐记录</string>
+    <string name="record_meal">记录用餐</string>
+    <string name="meal_time">用餐时间</string>
+    <string name="meal_recorded">用餐记录成功</string>
+    
+    <!-- 胰岛素记录 -->
+    <string name="insulin_record_title">胰岛素记录</string>
+    <string name="record_insulin">记录胰岛素</string>
+    <string name="insulin_recorded">胰岛素记录成功</string>
+    
+    <!-- 通知 -->
+    <string name="insulin_reminder_title">💉 胰岛素注射提醒</string>
+    <string name="meal_reminder_title">🍽️ 用餐提醒</string>
+    <string name="notification_title">DiabEat 提醒</string>
+    
+    <!-- 通用 -->
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="loading">加载中...</string>
+    <string name="error">错误</string>
+    
+    <!-- API 配置 -->
+    <!-- 模拟器使用: http://10.0.2.2:8000 -->
+    <!-- 真机使用: http://192.168.1.249:8000 (请确保手机和电脑在同一WiFi网络) -->
+    <string name="api_base_url">http://10.0.2.2:8000</string>
+    
+    <!-- 首页 -->
+    <string name="home_title">DiabEat</string>
+    <string name="my_diary">My Diary</string>
+    <string name="home_welcome_back">你好，欢迎回来 👋</string>
+    <string name="home_subtitle">及时记录饮食与胰岛素，DiabEat AI 随时守护你。</string>
+    
+    <!-- 新首页 -->
+    <string name="carbohydrates">碳水化合物</string>
+    <string name="remaining">剩余</string>
+    <string name="daily_goal">每日目标</string>
+    <string name="eaten">已摄入</string>
+    <string name="burned">运动消耗</string>
+    <string name="calories_remaining_label">热量剩余</string>
+    <string name="breakfast">Breakfast</string>
+    <string name="lunch">Lunch</string>
+    <string name="dinner">Dinner</string>
+    <string name="snack">Snack</string>
+    <string name="water_tracker">Water Tracker</string>
+    <string name="activities">Activities</string>
+    
+    <!-- 营养 -->
+    <string name="calories_title">卡路里</string>
+    <string name="calories">卡路里</string>
+    <string name="calories_unit">kcal</string>
+    <string name="kcal_unit">kcal</string>
+    <string name="carbs_title">净碳水</string>
+    <string name="carbs">碳水化合物</string>
+    <string name="carbs_unit">g</string>
+    <string name="net_carbs">净碳水化合物</string>
+    <string name="protein">蛋白质</string>
+    <string name="fat">脂肪</string>
+    <string name="fiber">膳食纤维</string>
+    <string name="gi_value">升糖指数(GI)</string>
+    <string name="gl_value">血糖负荷(GL)</string>
+    <string name="nutrition_info">营养成分</string>
+    <string name="cooking_method_format">烹饪方式: %1$s</string>
+    
+    <!-- 统计 -->
+    <string name="today_meals">今日用餐</string>
+    <string name="insulin_records">胰岛素记录</string>
+    
+    <!-- 操作 -->
+    <string name="search_food">搜索食物</string>
+    <string name="photo_recognition">拍照识别</string>
+    
+    <!-- 空状态 -->
+    <string name="no_records">暂无记录</string>
+    <string name="no_records_hint">轻点下方按钮开始记录今日的饮食或胰岛素，让健康数据持续累积。</string>
+    
+    <!-- 标签页 -->
+    <string name="history_tab">历史记录</string>
+    <string name="diabetes_info_tab">糖尿病信息</string>
+    
+    <!-- 相机屏幕 -->
+    <string name="camera_screen_title">拍照识别食物</string>
+    <string name="gallery_button">相册</string>
+    <string name="camera_button">📷</string>
+    
+    <!-- 通用 -->
+    <string name="back_button">返回</string>
+    <string name="retake_photo">重拍</string>
+    <string name="add_to_meal_record">添加到饮食记录</string>
+    <string name="saving_meal_record">正在保存饮食记录...</string>
+    <string name="meal_record_saved">饮食记录已保存</string>
+    <string name="save_meal_record_failed">保存饮食记录失败</string>
+    
+    <!-- 营养统计 -->
+    <string name="daily_recommendation">每日推荐</string>
+    <string name="today_intake">今日摄入</string>
+    <string name="remaining_calories">剩余能量</string>
+    <string name="calories_remaining">剩余 %1$d kcal</string>
+    <string name="calories_over">超出 %1$d kcal</string>
+    <string name="nutrition_summary">营养概览</string>
+    
+    <!-- 食物搜索 -->
+    <string name="food_search_title">搜索食物</string>
+    <string name="food_search_hint">搜索食物名称</string>
+    <string name="search_button">搜索</string>
+    <string name="clear_button">清除</string>
+    <string name="search_failed">搜索失败: %1$s</string>
+    <string name="no_food_found">未找到食物</string>
+    <string name="add_food">添加食物</string>
+    <string name="calories_format">卡路里: %1$d kcal</string>
+    
+    <!-- 胰岛素记录 -->
+    <string name="injection_time">注射时间</string>
+    <string name="insulin_dose">胰岛素剂量（单位）</string>
+    <string name="notes">备注</string>
+    <string name="save_button">保存</string>
+    
+    <!-- 餐食记录 -->
+
+    <!-- 首页额外字符串 -->
+    <string name="calendar">日历</string>
+    <string name="select_date">选择日期</string>
+    <string name="confirm">确认</string>
+    <string name="load_records_failed_format">加载记录失败: %1$s</string>
+    <string name="device_authenticating">正在进行设备认证，请稍候...</string>
+    <string name="current_user_format">当前用户: %1$s</string>
+    <string name="unauthenticated">未认证</string>
+    <string name="menu">菜单</string>
+    <string name="settings">设置</string>
+    <string name="diabetes_type">糖尿病类型</string>
+    <string name="not_available">N/A</string>
+    <string name="common_symptoms">常见症状</string>
+    <string name="diabetes_symptoms_list">多饮、多食、多尿、体重减轻、视力模糊、疲劳等。</string>
+    <string name="precautions">注意事项</string>
+    <string name="monitor_blood_sugar">定期监测血糖。</string>
+    <string name="control_diet">合理饮食，控制碳水化合物摄入。</string>
+    <string name="exercise_regularly">适度运动。</string>
+    <string name="take_medicine_on_time">按时用药或注射胰岛素。</string>
+    <string name="regular_checkup">定期复查，听从医生指导。</string>
+    <string name="start_food_recognition">开始食物识别</string>
+    <string name="meal">用餐</string>
+    <string name="meal_time_format">用餐时间: %1$s</string>
+    <string name="foods_format">食物: %1$s</string>
+    <string name="total_calories_format">总热量: %1$d kcal</string>
+    <string name="notes_format">备注: %1$s</string>
+    <string name="insulin">胰岛素</string>
+    <string name="insulin_injection_time_format">注射时间: %1$s</string>
+    <string name="insulin_dosage_format">剂量: %1$d %2$s</string>
+    <string name="insulin_type_format">胰岛素类型: %1$s</string>
+    <string name="unit">单位</string>
+
+    <!-- 食物识别 -->
+    <string name="food_recognition_title">食物识别</string>
+    <string name="selected_food_image">选择的食物图片</string>
+    <string name="recognizing_food">正在识别食物...</string>
+    <string name="recognition_result">识别结果</string>
+    <string name="confidence_format">置信度: %1$d%%</string>
+    <string name="weight_format">重量: %1$dg</string>
+    <string name="continue_calculate_nutrition">继续计算营养</string>
+    <string name="recognition_failed">识别失败</string>
+    <string name="please_retry">请重试</string>
+    <string name="retry_button">重试</string>
+    
+    <!-- 底部导航栏 -->
+    <string name="tab_home">首页</string>
+    <string name="tab_mine">我的</string>
+    
+    <!-- 我的页面 -->
+    <string name="user_profile">用户资料</string>
+    <string name="click_to_edit">点击编辑</string>
+    <string name="user_parameters">用户参数</string>
+    <string name="user_parameters_desc">胰岛素敏感系数、碳水比等</string>
+    <string name="meal_history">餐食历史</string>
+    <string name="meal_history_desc">查看历史记录</string>
+    <string name="settings_desc">应用设置</string>
+    <string name="about">关于</string>
+    <string name="app_version">版本 1.0.0</string>
+    
+    <!-- 我的页面 Tab -->
+    <string name="collection_tab">收藏</string>
+    <string name="wish_list_tab">心愿单</string>
+    
+    <!-- 相机 -->
+    <string name="import_from_gallery">从相册导入</string>
+    <string name="tips">提示</string>
+    <string name="camera_scan_tips">将食物放置在框内，点击拍照识别</string>
+    
+    <!-- 搜索与结果 -->
+    <string name="search_results">搜索结果</string>
+    <string name="no_results_found">未找到结果</string>
+    
+    <!-- 设置与语言 -->
+    <string name="settings_title">设置</string>
+    <string name="language_settings">语言</string>
+    <string name="english">英语</string>
+    <string name="chinese">中文</string>
+    <string name="notification_settings">通知设置</string>
+    <string name="enable_notifications">开启通知</string>
+    <string name="about_app">关于应用</string>
+    
+    <!-- 通用错误与提示 -->
+    <string name="network_error">网络连接错误</string>
+    <string name="server_error">服务器错误，请稍后重试</string>
+    <string name="invalid_input">输入无效，请检查后再试</string>
+    <string name="permission_denied">权限被拒绝</string>
+    <string name="save_success">保存成功</string>
+    <string name="delete_success">删除成功</string>
+    <string name="update_success">更新成功</string>
+</resources>
+

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 通知配置 -->
+    <bool name="enable_notifications">true</bool>
+    <integer name="reminder_advance_minutes">15</integer>
+</resources>
+
