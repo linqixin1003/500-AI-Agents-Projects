@@ -1,0 +1,2 @@
+# Food recognition module
+

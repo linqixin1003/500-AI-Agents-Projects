@@ -1,0 +1,28 @@
+# 复制以下内容到 config/.env 文件
+
+# ============================================
+# 必需配置
+# ============================================
+
+# 数据库连接（使用 docker-compose 的默认配置）
+DATABASE_URL=postgresql://diabeat:diabeat123@localhost:5432/diabeat
+
+# JWT 密钥（已生成，请使用下面的值）
+SECRET_KEY=2b4c9104f9a9ed7a29bb1c29ce09b1e828b12e298c0d03af151c3cd5c77053c5
+
+# 通义千问 API Key（从 rock-server 获取）
+DASHSCOPE_API_KEY=sk-2969688c18494729b792af05b64ffbad
+
+# ============================================
+# 可选配置（AWS S3 已配置）
+# ============================================
+
+AWS_ACCESS_KEY_ID=AKIAW5WU5C4HN6FSSOFC
+AWS_SECRET_ACCESS_KEY=UP61KnmqnaNSip0BBij/5HW7taNtyeb3ArupsDR
+AWS_REGION=us-east-2
+AWS_S3_BUCKET=diabeat-ai-images
+S3_URL=https://diabeat-ai-images.s3.us-east-2.amazonaws.com
+
+ENVIRONMENT=dev
+HOST=localhost:8000
+

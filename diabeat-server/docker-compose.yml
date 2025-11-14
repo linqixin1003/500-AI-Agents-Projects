@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: diabeat-db
+    environment:
+      POSTGRES_USER: diabeat
+      POSTGRES_PASSWORD: diabeat123
+      POSTGRES_DB: diabeat
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diabeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:6
+    container_name: diabeat-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: diabeat
+      MONGO_INITDB_ROOT_PASSWORD: diabeat123
+      MONGO_INITDB_DATABASE: diabeat
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: diabeat-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: diabeat-server
+    environment:
+      DATABASE_URL: postgresql://diabeat:diabeat123@db:5432/diabeat
+      MONGODB_URL: mongodb://diabeat:diabeat123@mongodb:27017/diabeat?authSource=admin
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: dev
+      SECRET_KEY: dev-secret-key-change-in-production
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./static:/app/static
+    depends_on:
+      db:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
+
