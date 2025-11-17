@@ -25,6 +25,11 @@ import android.app.Application // 导入 Application
 import com.diabeat.ui.onboarding.OnboardingScreen
 import com.diabeat.ui.onboarding.UserOnboardingData
 import android.content.Context
+import androidx.compose.runtime.collectAsState  // ✅ 添加collectAsState导入
+import androidx.compose.foundation.layout.height  // ✅ 添加height导入
+import androidx.compose.ui.unit.dp  // ✅ 添加dp导入
+import okhttp3.MediaType.Companion.toMediaType
+import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 
 /**
  * 主Activity
@@ -66,6 +71,45 @@ fun MainScreen() {
     
     val cameraViewModel: CameraViewModel = viewModel()
     val recognitionViewModel: FoodRecognitionViewModel = viewModel()
+    
+    // ✅ 使用工厂模式创建FoodScanViewModel（避免Hilt依赖）
+    val foodScanViewModel: com.diabeat.ui.food.FoodScanViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+            if (modelClass.isAssignableFrom(com.diabeat.ui.food.FoodScanViewModel::class.java)) {
+                @Suppress("UNCHECKED_CAST")
+                // 手动创建Repository和API
+                val json = kotlinx.serialization.json.Json {
+                    ignoreUnknownKeys = true
+                    isLenient = true
+                    coerceInputValues = true
+                }
+                
+                val contentType = "application/json".toMediaType()
+                val converterFactory = json.asConverterFactory(contentType)
+                
+                // USDA API
+                val usdaRetrofit = retrofit2.Retrofit.Builder()
+                    .baseUrl("https://api.nal.usda.gov/fdc/")
+                    .addConverterFactory(converterFactory)
+                    .build()
+                val usdaApi = usdaRetrofit.create(com.diabeat.data.api.USDAFoodDataApi::class.java)
+                
+                // OpenFoodFacts API
+                val offRetrofit = retrofit2.Retrofit.Builder()
+                    .baseUrl("https://world.openfoodfacts.org/")
+                    .addConverterFactory(converterFactory)
+                    .build()
+                val offApi = offRetrofit.create(com.diabeat.data.api.OpenFoodFactsApi::class.java)
+                
+                // Repository
+                val repository = com.diabeat.data.repository.FoodRepository(usdaApi, offApi)
+                
+                return com.diabeat.ui.food.FoodScanViewModel(repository) as T
+            }
+            throw IllegalArgumentException("Unknown ViewModel class")
+        }
+    })
+    
     val homeViewModel: HomeViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(HomeViewModel::class.java)) {
@@ -103,6 +147,7 @@ fun MainScreen() {
                     currentScreen = Screen.Camera
                 },
                 onNavigateToFoodSearch = { currentScreen = Screen.FoodSearch },
+                onNavigateToBarcodeScanner = { currentScreen = Screen.BarcodeScanner },  // ✅ 添加条形码扫描导航
                 onNavigateToSettings = { /* TODO: Navigate to settings */ },
                 onNavigateToProfile = { /* TODO: Navigate to profile */ }
             )
@@ -167,16 +212,89 @@ fun MainScreen() {
                 }
             )
         }
+        
+        Screen.BarcodeScanner -> {
+            com.diabeat.ui.food.BarcodeScannerScreen(
+                onBarcodeScanned = { barcode ->
+                    // 调用ViewModel扫描条形码
+                    foodScanViewModel.scanBarcode(barcode)
+                    // 跳转到营养信息页面
+                    currentScreen = Screen.FoodNutrition
+                },
+                onBack = { currentScreen = Screen.Main }
+            )
+        }
+        
+        Screen.FoodNutrition -> {
+            val product by foodScanViewModel.currentProduct.collectAsState()
+            val uiState by foodScanViewModel.uiState.collectAsState()
+            
+            when (uiState) {
+                is com.diabeat.ui.food.FoodScanUiState.Loading -> {
+                    // 显示加载状态
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
+                }
+                is com.diabeat.ui.food.FoodScanUiState.Success -> {
+                    product?.let { foodProduct ->
+                        com.diabeat.ui.food.FoodNutritionScreen(
+                            product = foodProduct,
+                            onLogFood = { servings ->
+                                // 记录食品
+                                foodScanViewModel.logFood(foodProduct, servings)
+                                // TODO: 刷新homeViewModel数据
+                                homeViewModel.refreshNutritionData()
+                                // 返回主页
+                                currentScreen = Screen.Main
+                            },
+                            onBack = { currentScreen = Screen.Main }
+                        )
+                    }
+                }
+                is com.diabeat.ui.food.FoodScanUiState.Error -> {
+                    // 显示错误状态
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.foundation.layout.Column(
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                        ) {
+                            androidx.compose.material3.Text(
+                                "Product not found",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyLarge
+                            )
+                            androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(16.dp))
+                            androidx.compose.material3.Button(
+                                onClick = { currentScreen = Screen.Main }
+                            ) {
+                                androidx.compose.material3.Text("Back to Home")
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    // 其他状态返回主页
+                    currentScreen = Screen.Main
+                }
+            }
+        }
     }
 }
 
 enum class Screen {
-    Onboarding, // 引导页
-    Main,      // 主屏幕（带底部导航）
-    Home,      // 首页
-    Camera,    // 相机
-    Recognition,  // 识别结果
-    FoodSearch    // 食物搜索
+    Onboarding,      // 引导页
+    Main,            // 主屏幕（带底部导航）
+    Home,            // 首页
+    Camera,          // 相机
+    Recognition,     // 识别结果
+    FoodSearch,      // 食物搜索
+    BarcodeScanner,  // ✅ 条形码扫描
+    FoodNutrition    // ✅ 营养信息展示
 }
 
 // 检查是否是首次启动

@@ -22,11 +22,14 @@ import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Today
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,13 +53,20 @@ import com.diabeat.R
 import com.diabeat.data.model.DailyNutritionRecommendation
 import com.diabeat.data.model.TodayNutritionIntake
 import com.diabeat.data.model.MealRecordResponse
+import com.diabeat.data.model.BloodGlucosePredictionRequest
+import com.diabeat.data.model.BloodGlucosePredictionResponse
+import com.diabeat.data.model.BloodGlucoseCorrectionResponse
+import com.diabeat.data.model.BloodGlucoseCorrectionRequest
 import com.diabeat.viewmodel.HomeViewModel
 import com.diabeat.ui.dialog.ExerciseRecordDialog
 import com.diabeat.ui.dialog.WaterRecordDialog
 import com.diabeat.ui.dialog.MedicationRecordDialog
+import com.diabeat.ui.dialog.BloodGlucosePredictionDialog
+import com.diabeat.ui.dialog.BloodGlucoseCorrectionDialog
 import com.diabeat.data.model.ExerciseRecordRequest
 import com.diabeat.data.model.WaterRecordRequest
 import com.diabeat.data.model.MedicationRecordRequest
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -72,7 +82,8 @@ import kotlin.math.roundToInt
 fun NewHomeScreen(
     homeViewModel: HomeViewModel,
     onNavigateToCamera: (mealType: String?) -> Unit, // 修改为接受餐次类型参数
-    onNavigateToFoodSearch: () -> Unit
+    onNavigateToFoodSearch: () -> Unit,
+    onNavigateToBarcodeScanner: () -> Unit = {}  // 导航到条形码扫描
 ) {
     val selectedDate by homeViewModel.selectedDate.collectAsState()
     val mealRecords by homeViewModel.mealRecords.collectAsState()
@@ -82,22 +93,52 @@ fun NewHomeScreen(
     val dailyRecommendation by homeViewModel.dailyRecommendation.collectAsState()
     val todayIntake by homeViewModel.todayIntake.collectAsState()
     val currentUser by homeViewModel.user.collectAsState()
+    val latestPrediction by homeViewModel.bloodGlucosePrediction.collectAsState()
+    val bgCorrections by homeViewModel.bloodGlucoseCorrections.collectAsState()
 
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     
     // 对话框状态
     var showExerciseDialog by remember { mutableStateOf(false) }
     var showWaterDialog by remember { mutableStateOf(false) }
     var showMedicationDialog by remember { mutableStateOf(false) }
+    var showFoodScanOptions by remember { mutableStateOf(false) }  // 食品扫描选择
+    var showBgCorrectionDialog by remember { mutableStateOf(false) }  // 血糖纠正对话框
+    var isPredicting by remember { mutableStateOf(false) }
+    var isSubmittingCorrection by remember { mutableStateOf(false) }
+    var isManualRefreshing by remember { mutableStateOf(false) }
+    
+    // 智能刷新管理器
+    val smartRefreshManager = remember {
+        com.diabeat.service.SmartRefreshManager(
+            context = context,
+            apiService = homeViewModel.apiService,
+            viewModel = homeViewModel
+        )
+    }
+    
+    // 应用进入前台时启动刷新（首次加载）
+    LaunchedEffect(Unit) {
+        smartRefreshManager.onAppForegrounded()
+    }
+    
+    // 清理资源
+    DisposableEffect(Unit) {
+        onDispose {
+            smartRefreshManager.cleanup()
+        }
+    }
     
     LaunchedEffect(homeViewModel) {
         homeViewModel.fetchRecordsForDate(selectedDate)
-        homeViewModel.fetchNutritionData()
+        homeViewModel.fetchNutritionData(selectedDate)
         // 拉取当天的运动、水分、用药数据
-        homeViewModel.fetchExerciseSummary()
-        homeViewModel.fetchWaterSummary()
-        homeViewModel.fetchMedicationSummary()
+        homeViewModel.fetchExerciseSummary(selectedDate)
+        homeViewModel.fetchWaterSummary(selectedDate)
+        homeViewModel.fetchMedicationSummary(selectedDate)
+        homeViewModel.fetchBloodGlucoseCorrections()
     }
 
     val isRefreshing = isLoadingRecords || isLoadingNutrition
@@ -119,13 +160,233 @@ fun NewHomeScreen(
                         if (response.isSuccessful) {
                             showExerciseDialog = false
                             homeViewModel.refreshNutritionData()
+                            homeViewModel.fetchExerciseSummary()
+                            android.widget.Toast.makeText(
+                                context,
+                                "运动记录保存成功",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                "保存失败: ${response.message()}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
                     } catch (e: Exception) {
                         android.util.Log.e("NewHomeScreen", "保存运动记录失败: ${e.message}", e)
+                        android.widget.Toast.makeText(
+                            context,
+                            "网络错误，请稍后重试",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
         )
+    }
+
+    if (isPredicting) {
+        Dialog(onDismissRequest = { }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 6.dp,
+                modifier = Modifier.wrapContentSize()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp, vertical = 20.dp)
+                        .widthIn(min = 200.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "AI预测进行中...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+    
+    // 移除旧的对话框方式，改为直接使用真实数据预测
+    // 点击AI预测时，自动收集用户的真实记录数据
+    
+    if (showBgCorrectionDialog) {
+        // 如果没有预测记录，创建一个默认对象
+        val prediction = latestPrediction ?: com.diabeat.data.model.BloodGlucosePredictionResponse(
+            prediction_id = "",
+            predictions = emptyList(),
+            peak_time = 0,
+            peak_value = 0f,
+            risk_level = "unknown"
+        )
+        
+        BloodGlucoseCorrectionDialog(
+            prediction = prediction,
+            onDismiss = { showBgCorrectionDialog = false },
+            isSubmitting = isSubmittingCorrection,
+            onConfirm = { request ->
+                isSubmittingCorrection = true
+                coroutineScope.launch {
+                    try {
+                        val response = homeViewModel.apiService.submitBloodGlucoseCorrection(request)
+                        if (response.isSuccessful) {
+                                // 直接使用返回的correction数据，立即更新UI
+                                val correctionData = response.body()
+                                if (correctionData != null) {
+                                    homeViewModel.addBloodGlucoseCorrection(correctionData)
+                                    android.util.Log.d("NewHomeScreen", "纠正数据已添加: ${correctionData.actual_value}")
+                                }
+                                
+                                // 提交纠正后，使用实测血糖值重新预测
+                                android.util.Log.d("NewHomeScreen", "纠正已保存，使用实测血糖 ${request.actual_value} 重新预测")
+                                
+                                // 使用当前的饮食和用药数据，但用实测血糖作为当前血糖值
+                                val totalCarbs = todayIntake?.total_carbs ?: 0f
+                                val currentMedicationSummary = homeViewModel.medicationSummary.value
+                                val insulinDose = currentMedicationSummary?.medications
+                                    ?.filter { it.medication_type == "insulin" }
+                                    ?.sumOf { it.dosage.toDouble() }?.toFloat() ?: 0f
+                                
+                                val currentExerciseSummary = homeViewModel.exerciseSummary.value
+                                val activityLevel = when {
+                                    currentExerciseSummary == null || currentExerciseSummary.total_duration == 0 -> "sedentary"
+                                    currentExerciseSummary.total_duration < 30 -> "light"
+                                    currentExerciseSummary.total_duration < 60 -> "moderate"
+                                    else -> "vigorous"
+                                }
+                                
+                                // 获取时间信息（关键！）
+                                val currentMealRecords = homeViewModel.mealRecords.value
+                                val mealTime = currentMealRecords.firstOrNull()?.meal_time
+                                val medicationTime = currentMedicationSummary?.medications
+                                    ?.firstOrNull()?.let {
+                                        try {
+                                            it.created_at
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    }
+                                val currentTime = java.time.LocalDateTime.now().toString()
+                                
+                                // ✅ 构建历史记录（最近3次）
+                                val recentMeals = currentMealRecords.take(3).mapNotNull { meal ->
+                                    meal.total_carbs?.let { carbs ->
+                                        com.diabeat.data.model.MealHistoryItem(
+                                            meal_time = meal.meal_time,
+                                            total_carbs = carbs,
+                                            meal_type = null,
+                                            foods = meal.food_name?.joinToString(", ") ?: meal.food_items?.joinToString(", ") { it.name }
+                                        )
+                                    }
+                                }.takeIf { it.isNotEmpty() }
+                                
+                                val recentMedications = currentMedicationSummary?.medications?.take(3)?.map { med ->
+                                    com.diabeat.data.model.MedicationHistoryItem(
+                                        medication_time = med.created_at,
+                                        medication_type = med.medication_type,
+                                        dosage = med.dosage
+                                    )
+                                }?.takeIf { it.isNotEmpty() }
+                                
+                                android.util.Log.d("NewHomeScreen", "重新预测参数: carbs=$totalCarbs, insulin=$insulinDose, bg=${request.actual_value}, recent_meals=${recentMeals?.size}, recent_meds=${recentMedications?.size}")
+                                
+                                // 使用实测血糖值重新预测（包含完整时间上下文 + 用户基础信息 + 历史记录）
+                                val newRequest = com.diabeat.data.model.BloodGlucosePredictionRequest(
+                                    total_carbs = if (totalCarbs > 0) totalCarbs else 50f,  // 默认50g碳水
+                                    insulin_dose = insulinDose,
+                                    current_bg = request.actual_value,  // ✅ 使用实测血糖值（纠正值）
+                                    gi_value = null,
+                                    activity_level = activityLevel,
+                                    // ✅ 时间上下文（关键！）
+                                    meal_time = mealTime,
+                                    medication_time = medicationTime,
+                                    current_time = currentTime,
+                                    // ✅ 用户基础信息（个性化预测）
+                                    weight = currentUser?.weight,
+                                    height = currentUser?.height,
+                                    age = currentUser?.age,
+                                    gender = currentUser?.gender,
+                                    diabetes_type = currentUser?.diabetes_type,
+                                    // ✅ 历史记录（AI上下文）
+                                    recent_meals = recentMeals,
+                                    recent_medications = recentMedications
+                                )
+                                
+                                android.util.Log.d("NewHomeScreen", "🔄 开始调用预测API...")
+                                try {
+                                    val predictionResponse = homeViewModel.apiService.predictBloodGlucose(newRequest)
+                                    android.util.Log.d("NewHomeScreen", "✅ 重新预测响应: ${predictionResponse.code()}")
+                                    
+                                    if (predictionResponse.isSuccessful) {
+                                        val predictionBody = predictionResponse.body()
+                                        if (predictionBody != null) {
+                                            android.util.Log.d("NewHomeScreen", "🎯 预测结果: 峰值=${predictionBody.peak_value}, 风险=${predictionBody.risk_level}, 点数=${predictionBody.predictions.size}")
+                                            homeViewModel.setBloodGlucosePrediction(predictionBody)
+                                            android.util.Log.d("NewHomeScreen", "✅ 预测曲线已设置到ViewModel")
+                                            showBgCorrectionDialog = false  // ✅ 预测成功后关闭对话框
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "纠正已保存，预测曲线已更新（基于实测血糖 ${request.actual_value} mmol/L）",
+                                                android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                        } else {
+                                            android.util.Log.e("NewHomeScreen", "重新预测响应体为空")
+                                            showBgCorrectionDialog = false  // 即使失败也关闭对话框
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "纠正已保存，但重新预测响应为空",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    } else {
+                                        val errorBody = predictionResponse.errorBody()?.string()
+                                        android.util.Log.e("NewHomeScreen", "重新预测失败: ${predictionResponse.code()}, $errorBody")
+                                        showBgCorrectionDialog = false  // 预测失败也关闭对话框
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "纠正已保存，但重新预测失败: ${predictionResponse.message()}",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("NewHomeScreen", "重新预测异常", e)
+                                    showBgCorrectionDialog = false  // 预测异常也关闭对话框
+                                    val errorMsg = when {
+                                        e is java.net.SocketTimeoutException -> "纠正已保存。AI预测耗时较长，请稍后点击\"AI预测\"按钮查看结果"
+                                        else -> "纠正已保存，但重新预测失败: ${e.message}"
+                                    }
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        errorMsg,
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            } else {
+                                showBgCorrectionDialog = false  // 提交失败也关闭对话框
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "提交失败: ${response.message()}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("NewHomeScreen", "提交纠正失败: ${e.message}", e)
+                            showBgCorrectionDialog = false  // 提交异常也关闭对话框
+                            android.widget.Toast.makeText(
+                                context,
+                                "网络错误，请稍后重试",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } finally {
+                            isSubmittingCorrection = false
+                        }
+                    }
+                }
+            )
     }
     
     if (showWaterDialog) {
@@ -137,10 +398,31 @@ fun NewHomeScreen(
                         val response = homeViewModel.apiService.createWaterRecord(request)
                         if (response.isSuccessful) {
                             showWaterDialog = false
+                            // 刷新所有相关数据
                             homeViewModel.refreshNutritionData()
+                            homeViewModel.fetchWaterSummary()
+                            // 显示成功提示
+                            android.widget.Toast.makeText(
+                                context,
+                                "饮水记录保存成功",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            // 显示错误提示
+                            android.widget.Toast.makeText(
+                                context,
+                                "保存失败: ${response.message()}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
                     } catch (e: Exception) {
                         android.util.Log.e("NewHomeScreen", "保存水分记录失败: ${e.message}", e)
+                        // 显示错误提示
+                        android.widget.Toast.makeText(
+                            context,
+                            "网络错误，请稍后重试",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -156,12 +438,48 @@ fun NewHomeScreen(
                         val response = homeViewModel.apiService.createMedicationRecord(request)
                         if (response.isSuccessful) {
                             showMedicationDialog = false
+                            // 刷新所有相关数据
                             homeViewModel.refreshNutritionData()
+                            homeViewModel.fetchMedicationSummary()
+                            // 显示成功提示
+                            android.widget.Toast.makeText(
+                                context,
+                                "用药记录保存成功",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            // 显示错误提示
+                            android.widget.Toast.makeText(
+                                context,
+                                "保存失败: ${response.message()}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
                     } catch (e: Exception) {
                         android.util.Log.e("NewHomeScreen", "保存用药记录失败: ${e.message}", e)
+                        // 显示错误提示
+                        android.widget.Toast.makeText(
+                            context,
+                            "网络错误，请稍后重试",
+                            android.widget.Toast.LENGTH_SHORT
+                            ).show()
                     }
                 }
+            }
+        )
+    }
+    
+    // 食品扫描方式选择对话框
+    if (showFoodScanOptions) {
+        FoodScanOptionsDialog(
+            onDismiss = { showFoodScanOptions = false },
+            onBarcodeSelected = {
+                showFoodScanOptions = false
+                onNavigateToBarcodeScanner()
+            },
+            onCameraSelected = {
+                showFoodScanOptions = false
+                onNavigateToCamera(null)
             }
         )
     }
@@ -180,17 +498,18 @@ fun NewHomeScreen(
             // 🎨 美化的顶部Banner
             BeautifulHeaderBanner(
                 userName = currentUser?.name ?: "用户",
-                currentTime = getGreeting()
+                currentTime = getGreeting(),
+                homeViewModel = homeViewModel
             )
             
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 🎨 美化的快捷操作按钮组 (2x2网格)
+            // 🎨 美化的快捷操作按钮组 (2x2网格：运动、饮水、用药、饮食)
             BeautifulQuickActions(
                 onExerciseClick = { showExerciseDialog = true },
                 onWaterClick = { showWaterDialog = true },
                 onMedicationClick = { showMedicationDialog = true },
-                onMealClick = { onNavigateToCamera(null) }
+                onMealClick = { showFoodScanOptions = true }  // 弹出扫描方式选择
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -200,24 +519,188 @@ fun NewHomeScreen(
                 dailyRecommendation = dailyRecommendation,
                 todayIntake = todayIntake
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 🎨 美化的血糖预测卡片
-            BeautifiedBloodGlucosePredictionCard(
-                dailyRecommendation = dailyRecommendation,
-                todayIntake = todayIntake,
-                homeViewModel = homeViewModel
-            )
-
+            
             Spacer(modifier = Modifier.height(16.dp))
             
-            // 今日运动、水分、用药记录列表
             val exerciseSummary by homeViewModel.exerciseSummary.collectAsState()
             val waterSummary by homeViewModel.waterSummary.collectAsState()
             val medicationSummary by homeViewModel.medicationSummary.collectAsState()
             
-            // 运动记录列表
+            // 🎨 美化的血糖预测卡片
+            BeautifiedBloodGlucosePredictionCard(
+                dailyRecommendation = dailyRecommendation,
+                todayIntake = todayIntake,
+                waterSummary = waterSummary,
+                exerciseSummary = exerciseSummary,
+                medicationSummary = medicationSummary,
+                mealRecords = mealRecords,
+                prediction = latestPrediction,
+                corrections = bgCorrections,
+                isRefreshing = isManualRefreshing,
+                onRefreshClick = {
+                    if (!isManualRefreshing) {
+                        isManualRefreshing = true
+                        smartRefreshManager.manualRefresh { success ->
+                            isManualRefreshing = false
+                            if (success) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "预测已更新",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "刷新失败，请稍后重试",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                },
+                onPredictClick = {
+                    if (isPredicting) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "正在进行AI预测，请稍候...",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        return@BeautifiedBloodGlucosePredictionCard
+                    }
+                    // 使用真实记录数据进行AI预测
+                    isPredicting = true
+                    coroutineScope.launch {
+                        try {
+                            // 从真实记录中提取数据
+                            val totalCarbs = todayIntake?.total_carbs ?: 0f
+                            val insulinDose = medicationSummary?.medications
+                                ?.filter { it.medication_type == "insulin" }
+                                ?.sumOf { it.dosage.toDouble() }?.toFloat() ?: 0f
+                            val giValue = null // TODO: 从饮食记录中计算平均GI值
+                            
+                            // 根据运动记录计算活动水平
+                            val exerciseSummaryValue = exerciseSummary
+                            val activityLevel = when {
+                                exerciseSummaryValue == null || exerciseSummaryValue.total_duration == 0 -> "sedentary"
+                                exerciseSummaryValue.total_duration < 30 -> "light"
+                                exerciseSummaryValue.total_duration < 60 -> "moderate"
+                                else -> "vigorous"
+                            }
+                            
+                            // ✅ 获取最新血糖值：优先使用实测值 > 预测值 > 默认值
+                            val currentBg = bgCorrections.firstOrNull()?.actual_value
+                                ?: latestPrediction?.predictions?.firstOrNull()?.bg_value
+                                ?: 5.6f
+                            
+                            android.util.Log.d("NewHomeScreen", "使用血糖值: $currentBg (实测=${bgCorrections.firstOrNull()?.actual_value}, 预测=${latestPrediction?.predictions?.firstOrNull()?.bg_value})")
+                            
+                            // ✅ 获取时间信息
+                            val currentMealRecords = homeViewModel.mealRecords.value
+                            val mealTime = currentMealRecords.firstOrNull()?.meal_time
+                            val medicationTime = medicationSummary?.medications
+                                ?.firstOrNull()?.let {
+                                    try {
+                                        it.created_at
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                }
+                            val currentTime = java.time.LocalDateTime.now().toString()
+                            
+                            // ✅ 构建历史记录（最近3次）
+                            val recentMeals = currentMealRecords.take(3).mapNotNull { meal ->
+                                meal.total_carbs?.let { carbs ->
+                                    com.diabeat.data.model.MealHistoryItem(
+                                        meal_time = meal.meal_time,
+                                        total_carbs = carbs,
+                                        meal_type = null,
+                                        foods = meal.food_name?.joinToString(", ") ?: meal.food_items?.joinToString(", ") { it.name }
+                                    )
+                                }
+                            }.takeIf { it.isNotEmpty() }
+                            
+                            val recentMedications = medicationSummary?.medications?.take(3)?.map { med ->
+                                com.diabeat.data.model.MedicationHistoryItem(
+                                    medication_time = med.created_at,
+                                    medication_type = med.medication_type,
+                                    dosage = med.dosage
+                                )
+                            }?.takeIf { it.isNotEmpty() }
+                            
+                            if (totalCarbs > 0) {
+                                val request = com.diabeat.data.model.BloodGlucosePredictionRequest(
+                                    total_carbs = totalCarbs,
+                                    insulin_dose = insulinDose,
+                                    current_bg = currentBg,  // ✅ 优先使用实测值
+                                    gi_value = giValue,
+                                    activity_level = activityLevel,
+                                    // ✅ 时间上下文
+                                    meal_time = mealTime,
+                                    medication_time = medicationTime,
+                                    current_time = currentTime,
+                                    // ✅ 用户基础信息（个性化预测）
+                                    weight = currentUser?.weight,
+                                    height = currentUser?.height,
+                                    age = currentUser?.age,
+                                    gender = currentUser?.gender,
+                                    diabetes_type = currentUser?.diabetes_type,
+                                    // ✅ 历史记录（AI上下文）
+                                    recent_meals = recentMeals,
+                                    recent_medications = recentMedications
+                                )
+                                
+                                android.util.Log.d("NewHomeScreen", "AI预测请求: carbs=$totalCarbs, insulin=$insulinDose, bg=$currentBg, activity=$activityLevel, meal_time=$mealTime, user_weight=${currentUser?.weight}, user_age=${currentUser?.age}")
+                                
+                                val response = homeViewModel.apiService.predictBloodGlucose(request)
+                                if (response.isSuccessful && response.body() != null) {
+                                    homeViewModel.setBloodGlucosePrediction(response.body())
+                                    homeViewModel.fetchBloodGlucoseCorrections()
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "AI预测成功！基于今日记录: ${totalCarbs.toInt()}g碳水, ${activityLevel}活动",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "预测失败: ${response.message()}",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "暂无饮食记录，无法进行AI预测",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("NewHomeScreen", "血糖预测失败", e)
+                            android.widget.Toast.makeText(
+                                context,
+                                "预测失败: ${e.message}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } finally {
+                            isPredicting = false
+                        }
+                    }
+                },
+                onCorrectionClick = { showBgCorrectionDialog = true }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // 今日记录列表：饮食记录、运动记录、用药记录、饮水记录
+            
+            // 1. 饮食记录列表（新格式：时间戳 | 食物名称 | 总碳水 | 卡路里）
+            MealRecordsListCard(
+                mealRecords = mealRecords
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // 2. 运动记录列表
             val exerciseSummaryValue = exerciseSummary
             if (exerciseSummaryValue != null && exerciseSummaryValue.exercises.isNotEmpty()) {
                 TodayRecordsListCard(
@@ -253,7 +736,39 @@ fun NewHomeScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
             
-            // 水分记录列表
+            // 3. 用药记录列表
+            val medicationSummaryValue = medicationSummary
+            if (medicationSummaryValue != null && medicationSummaryValue.medications.isNotEmpty()) {
+                TodayRecordsListCard(
+                    title = "用药记录",
+                    icon = Icons.Default.Medication,
+                    iconColor = MaterialTheme.colorScheme.error,
+                    summaryText = "共 ${medicationSummaryValue.total_count} 次" + 
+                                 if (medicationSummaryValue.insulin_count > 0) " (胰岛素 ${medicationSummaryValue.insulin_count})" else "",
+                    records = medicationSummaryValue.medications.map { medication ->
+                        val time = try {
+                            java.time.Instant.parse(medication.medication_time)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+                        } catch (e: Exception) {
+                            medication.medication_time
+                        }
+                        val medicationTypeName = when (medication.medication_type) {
+                            "insulin" -> "胰岛素"
+                            "oral_medication" -> "口服药物"
+                            else -> medication.medication_type
+                        }
+                        RecordItem(
+                            time = time,
+                            title = "$medicationTypeName · ${medication.medication_name}",
+                            subtitle = "${medication.dosage} ${medication.dosage_unit}"
+                        )
+                    }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            
+            // 4. 饮水记录列表
             val waterSummaryValue = waterSummary
             if (waterSummaryValue != null && waterSummaryValue.records.isNotEmpty()) {
                 TodayRecordsListCard(
@@ -285,47 +800,6 @@ fun NewHomeScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
-            
-            // 用药记录列表
-            val medicationSummaryValue = medicationSummary
-            if (medicationSummaryValue != null && medicationSummaryValue.medications.isNotEmpty()) {
-                TodayRecordsListCard(
-                    title = "用药记录",
-                    icon = Icons.Default.Medication,
-                    iconColor = MaterialTheme.colorScheme.error,
-                    summaryText = "共 ${medicationSummaryValue.total_count} 次" + 
-                                 if (medicationSummaryValue.insulin_count > 0) " (胰岛素 ${medicationSummaryValue.insulin_count})" else "",
-                    records = medicationSummaryValue.medications.map { medication ->
-                        val time = try {
-                            java.time.Instant.parse(medication.medication_time)
-                                .atZone(java.time.ZoneId.systemDefault())
-                                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-                        } catch (e: Exception) {
-                            medication.medication_time
-                        }
-                        val medicationTypeName = when (medication.medication_type) {
-                            "insulin" -> "胰岛素"
-                            "oral_medication" -> "口服药物"
-                            else -> medication.medication_type
-                        }
-                        RecordItem(
-                            time = time,
-                            title = "$medicationTypeName · ${medication.medication_name}",
-                            subtitle = "${medication.dosage} ${medication.dosage_unit}"
-                        )
-                    }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 餐次记录区
-            MealSectionsCard(
-                mealRecords = mealRecords,
-                insulinRecords = insulinRecords,
-                onAddMeal = onNavigateToCamera
-            )
 
             Spacer(modifier = Modifier.height(80.dp)) // 底部导航栏预留空间
         }
@@ -484,7 +958,7 @@ private fun MainNutritionCard(
             }
             
             Text(
-                text = "剩余 = 每日目标 + 运动消耗 - 已摄入",
+                text = "剩余 = 每日目标 - 已摄入",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -538,14 +1012,6 @@ private fun MainNutritionCard(
                         value = todayIntake?.total_carbs?.roundToInt() ?: 0,
                         unit = "g",
                         color = MaterialTheme.colorScheme.tertiary
-                    )
-
-                    NutritionDetailItem(
-                        icon = Icons.Filled.LocalFireDepartment,
-                        label = "运动消耗",
-                        value = 0,
-                        unit = "g",
-                        color = MaterialTheme.colorScheme.error
                     )
                 }
             }
@@ -814,16 +1280,15 @@ private fun SecondaryNutritionCard(
 private fun BloodGlucosePredictionCard(
     dailyRecommendation: DailyNutritionRecommendation?,
     todayIntake: TodayNutritionIntake?,
-    homeViewModel: HomeViewModel  // 新增参数以获取运动和水分数据
+    homeViewModel: HomeViewModel  // 新增参数以获取水分数据
 ) {
     // 从ViewModel获取实时数据
-    val exerciseSummary by homeViewModel.exerciseSummary.collectAsState()
     val waterSummary by homeViewModel.waterSummary.collectAsState()
     val mealRecords by homeViewModel.mealRecords.collectAsState()
     
-    // 改进的血糖预测算法 - 考虑碳水、运动和水分摄入
+    // 改进的血糖预测算法 - 考虑碳水和水分摄入
     // 这是一个简化的估算，实际血糖受多种因素影响
-    val predictedBloodGlucose = remember(todayIntake, exerciseSummary, waterSummary, mealRecords) {
+    val predictedBloodGlucose = remember(todayIntake, waterSummary, mealRecords) {
         if (todayIntake != null && dailyRecommendation != null) {
             // === 1. 基础血糖值 ===
             val baseGlucose = 5.6f // 空腹正常血糖：5.6 mmol/L
@@ -833,16 +1298,7 @@ private fun BloodGlucosePredictionCard(
             val carbsIntake = todayIntake.total_carbs
             val glucoseFromCarbs = carbsIntake / 15f
             
-            // === 3. 运动量影响（降低血糖）=== ✅ 已完成TODO
-            // 从运动记录API获取实时数据
-            val exerciseCalories = exerciseSummary?.total_calories ?: 0f
-            val glucoseReductionFromExercise = when {
-                exerciseCalories < 150f -> exerciseCalories / 300f // 0-0.5
-                exerciseCalories < 300f -> 0.5f + (exerciseCalories - 150f) / 300f // 0.5-1.0
-                else -> 1.0f + (exerciseCalories - 300f).coerceAtMost(200f) / 200f // 1.0-2.0
-            }
-            
-            // === 4. 水分摄入影响（帮助稳定血糖）=== ✅ 已完成TODO
+            // === 3. 水分摄入影响（帮助稳定血糖）===
             // 从水分记录API获取实时数据
             val waterIntake = waterSummary?.total_ml?.toFloat() ?: 2000f
             val waterFactor = when {
@@ -851,15 +1307,14 @@ private fun BloodGlucosePredictionCard(
                 else -> 0.9f // 严重不足，血糖浓缩
             }
             
-            // === 5. 时间衰减因子 === ✅ 已完成TODO
+            // === 4. 时间衰减因子 ===
             // 根据最后一餐时间动态计算
             val timeDecayFactor = calculateTimeDecay(mealRecords.firstOrNull()?.meal_time)
             
-            // === 6. 综合计算 ===
-            // 预测血糖 = 基础值 + (碳水影响 × 时间衰减 × 水分影响) - 运动降低
+            // === 5. 综合计算 ===
+            // 预测血糖 = 基础值 + (碳水影响 × 时间衰减 × 水分影响)
             val predicted = baseGlucose + 
-                (glucoseFromCarbs * timeDecayFactor * waterFactor) - 
-                glucoseReductionFromExercise
+                (glucoseFromCarbs * timeDecayFactor * waterFactor)
             
             // 限制范围在合理区间 (3.9-11.1 mmol/L)
             predicted.coerceIn(3.9f, 11.1f)
@@ -948,7 +1403,7 @@ private fun BloodGlucosePredictionCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "⚠️ 预测基于碳水摄入、运动消耗和水分摄入综合计算。仅供参考，请以实际血糖监测为准。",
+                    text = "⚠️ 预测基于碳水摄入和水分摄入综合计算。仅供参考，请以实际血糖监测为准。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp
@@ -985,6 +1440,67 @@ private fun calculateTimeDecay(lastMealTime: String?): Float {
     }
 }
 
+/**
+ * 计算血糖趋势说明
+ */
+private fun calculateTrendExplanation(
+    mealRecords: List<MealRecordResponse>,
+    medicationSummary: com.diabeat.data.model.TodayMedicationSummary?,
+    prediction: BloodGlucosePredictionResponse?
+): String {
+    if (prediction == null || prediction.predictions.isEmpty()) return ""
+    
+    try {
+        // 获取最近一餐时间
+        val lastMealTime = mealRecords.firstOrNull()?.meal_time ?: return ""
+        val lastMeal = java.time.Instant.parse(lastMealTime)
+        val now = java.time.Instant.now()
+        val minutesSinceMeal = java.time.Duration.between(lastMeal, now).toMinutes().toInt()
+        
+        // 检查是否有胰岛素
+        val hasInsulin = medicationSummary?.medications?.any { 
+            it.medication_type == "胰岛素" 
+        } == true
+        
+        // 分析预测趋势
+        val predictions = prediction.predictions.take(3)
+        val isRising = predictions.size >= 2 && predictions[1].bg_value > predictions[0].bg_value
+        val isFalling = predictions.size >= 2 && predictions[1].bg_value < predictions[0].bg_value
+        
+        // 根据不同阶段返回不同说明
+        return when {
+            minutesSinceMeal < 30 && hasInsulin && isRising -> {
+                "📈 餐后早期：血糖正在上升（正常现象）。胰岛素15分钟后开始起效"
+            }
+            minutesSinceMeal < 30 && !hasInsulin && isRising -> {
+                "⚠️ 血糖正在快速上升，建议及时注射胰岛素控制血糖"
+            }
+            minutesSinceMeal in 30..60 && isRising -> {
+                "⬆️ 继续上升中，预计60-90分钟达到峰值"
+            }
+            minutesSinceMeal in 60..120 && hasInsulin -> {
+                if (isFalling) {
+                    "📉 胰岛素正在发挥作用，血糖开始下降"
+                } else {
+                    "➡️ 接近峰值，胰岛素作用逐渐增强"
+                }
+            }
+            minutesSinceMeal > 120 && isFalling -> {
+                "✅ 餐后吸收期结束，血糖趋于稳定"
+            }
+            minutesSinceMeal > 240 -> {
+                "💡 距离上次进餐已${minutesSinceMeal/60}小时，建议适时补充能量"
+            }
+            else -> {
+                "📊 血糖处于${if (isRising) "上升" else if (isFalling) "下降" else "平稳"}趋势"
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("TrendExplanation", "计算趋势说明失败: ${e.message}", e)
+        return ""
+    }
+}
+
 // 根据时间段筛选餐次
 private fun filterMealsByTime(
     mealRecords: List<MealRecordResponse>,
@@ -1010,6 +1526,208 @@ private fun filterMealsByTime(
 
 private enum class MealType {
     BREAKFAST, LUNCH, DINNER, SNACK
+}
+
+/**
+ * 饮食记录列表卡片 - 显示时间戳、食物名称、总碳水、卡路里
+ */
+@Composable
+private fun MealRecordsListCard(
+    mealRecords: List<MealRecordResponse>
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // 标题
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Restaurant,
+                        contentDescription = "饮食记录",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "饮食记录",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = "共 ${mealRecords.size} 条",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            if (mealRecords.isEmpty()) {
+                // 空状态提示
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "暂无饮食记录\n点击「饮食」按钮添加",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                // 表头
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "时间",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(0.8f)
+                    )
+                    Text(
+                        text = "食物",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1.5f)
+                    )
+                    Text(
+                        text = "碳水",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(0.8f),
+                        textAlign = TextAlign.End
+                    )
+                    Text(
+                        text = "卡路里",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(0.9f),
+                        textAlign = TextAlign.End
+                    )
+                }
+                
+                Divider()
+                
+                // 记录列表
+                mealRecords.sortedByDescending { it.meal_time }.forEach { record ->
+                    MealRecordItem(record = record)
+                    Divider()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 单条饮食记录项
+ */
+@Composable
+private fun MealRecordItem(record: MealRecordResponse) {
+    val time = try {
+        java.time.Instant.parse(record.meal_time)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    } catch (e: Exception) {
+        record.meal_time.substring(11, 16)
+    }
+    
+    // 从food_name字段获取食物名称
+    val foodName = if (!record.food_name.isNullOrEmpty()) {
+        if (record.food_name.size == 1) {
+            record.food_name[0]
+        } else {
+            "${record.food_name[0]} 等${record.food_name.size}种"
+        }
+    } else if (!record.food_items.isNullOrEmpty()) {
+        // 如果food_name为空，从food_items获取
+        if (record.food_items.size == 1) {
+            record.food_items[0].name
+        } else {
+            "${record.food_items[0].name} 等${record.food_items.size}种"
+        }
+    } else {
+        "未知食物"
+    }
+    
+    // 从API返回的营养信息字段获取
+    val totalCarbs = record.total_carbs ?: 0f
+    val totalCalories = record.total_calories ?: 0f
+    
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 时间
+        Text(
+            text = time,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(0.8f)
+        )
+        
+        // 食物名称
+        Text(
+            text = foodName,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1.5f),
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+        
+        // 总碳水（暂时显示为"-"）
+        Text(
+            text = if (totalCarbs > 0) "${totalCarbs.roundToInt()}g" else "-",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(0.8f),
+            textAlign = TextAlign.End
+        )
+        
+        // 总卡路里（暂时显示为"-"）
+        Text(
+            text = if (totalCalories > 0) "${totalCalories.roundToInt()}" else "-",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.tertiary,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(0.9f),
+            textAlign = TextAlign.End
+        )
+    }
 }
 
 @Composable
@@ -1079,11 +1797,6 @@ private fun MealSectionsCard(
 
             // 水分追踪
             WaterTrackerSection()
-            
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
-
-            // 运动记录
-            ActivitySection()
         }
     }
 }
@@ -1120,48 +1833,6 @@ private fun WaterTrackerSection() {
         }
 
         IconButton(onClick = { /* TODO: 添加饮水记录 */ }) {
-            Icon(
-                imageVector = Icons.Filled.Add,
-                contentDescription = "添加",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ActivitySection() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { /* TODO: 打开运动记录 */ },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "🔥",
-                style = MaterialTheme.typography.headlineSmall
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text(
-                    text = "Activities",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "今日运动 0 分钟",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        IconButton(onClick = { /* TODO: 添加运动记录 */ }) {
             Icon(
                 imageVector = Icons.Filled.Add,
                 contentDescription = "添加",
@@ -1341,7 +2012,6 @@ private fun QuickRecordButton(
  */
 @Composable
 private fun TodaySummaryCard(
-    exerciseSummary: com.diabeat.data.model.TodayExerciseSummary?,
     waterSummary: com.diabeat.data.model.TodayWaterSummary?,
     medicationSummary: com.diabeat.data.model.TodayMedicationSummary?
 ) {
@@ -1365,42 +2035,6 @@ private fun TodaySummaryCard(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // 运动数据
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DirectionsRun,
-                        contentDescription = "运动",
-                        tint = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "运动消耗",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Text(
-                    text = if (exerciseSummary != null) {
-                        "${exerciseSummary.total_calories.roundToInt()} 大卡 · ${exerciseSummary.total_duration} 分钟"
-                    } else {
-                        "暂无记录"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-            }
             
             Spacer(modifier = Modifier.height(12.dp))
             
@@ -1742,7 +2376,8 @@ private fun getGreeting(): String {
 @Composable
 private fun BeautifulHeaderBanner(
     userName: String,
-    currentTime: String
+    currentTime: String,
+    homeViewModel: HomeViewModel
 ) {
     Box(
         modifier = Modifier
@@ -1850,7 +2485,11 @@ private fun BeautifulHeaderBanner(
             Spacer(modifier = Modifier.width(16.dp))
             
             // 右侧：今日概览卡片
-            TodayOverviewCard()
+            val selectedDate by homeViewModel.selectedDate.collectAsState()
+            TodayOverviewCard(
+                selectedDate = selectedDate,
+                onDateChange = { date -> homeViewModel.selectDate(date) }
+            )
         }
     }
 }
@@ -1859,9 +2498,13 @@ private fun BeautifulHeaderBanner(
  * 今日概览卡片 - 美化版，支持日期切换和日历选择
  */
 @Composable
-private fun TodayOverviewCard() {
+private fun TodayOverviewCard(
+    selectedDate: java.time.LocalDate,
+    onDateChange: (java.time.LocalDate) -> Unit
+) {
     var showDatePicker by remember { mutableStateOf(false) }
-    var selectedDate by remember { mutableStateOf(java.time.LocalDate.now()) }
+    val today = java.time.LocalDate.now()
+    val isToday = selectedDate.isEqual(today)
     
     Surface(
         onClick = { showDatePicker = true },
@@ -1889,7 +2532,7 @@ private fun TodayOverviewCard() {
             ) {
                 // 上一天按钮
                 IconButton(
-                    onClick = { selectedDate = selectedDate.minusDays(1) },
+                    onClick = { onDateChange(selectedDate.minusDays(1)) },
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
@@ -1919,15 +2562,24 @@ private fun TodayOverviewCard() {
                     )
                 }
                 
-                // 下一天按钮
+                // 下一天按钮（如果是今天，禁用并变灰）
                 IconButton(
-                    onClick = { selectedDate = selectedDate.plusDays(1) },
+                    onClick = { 
+                        if (!isToday) {
+                            onDateChange(selectedDate.plusDays(1))
+                        }
+                    },
+                    enabled = !isToday,
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowRight,
-                        contentDescription = "下一天",
-                        tint = Color(0xFF667EEA),
+                        contentDescription = if (isToday) "已是今天" else "下一天",
+                        tint = if (isToday) {
+                            Color(0xFF667EEA).copy(alpha = 0.3f) // 灰色
+                        } else {
+                            Color(0xFF667EEA)
+                        },
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -1974,7 +2626,7 @@ private fun TodayOverviewCard() {
         DatePickerDialog(
             selectedDate = selectedDate,
             onDateSelected = { date ->
-                selectedDate = date
+                onDateChange(date)
                 showDatePicker = false
             },
             onDismiss = { showDatePicker = false }
@@ -2067,6 +2719,7 @@ private fun BeautifulQuickActions(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // 运动记录按钮
             QuickActionButton(
                 icon = Icons.Default.DirectionsRun,
                 label = "运动",
@@ -2074,6 +2727,7 @@ private fun BeautifulQuickActions(
                 onClick = onExerciseClick,
                 modifier = Modifier.weight(1f)
             )
+            // 饮水记录按钮
             QuickActionButton(
                 icon = Icons.Default.WaterDrop,
                 label = "饮水",
@@ -2086,6 +2740,7 @@ private fun BeautifulQuickActions(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // 用药记录按钮
             QuickActionButton(
                 icon = Icons.Default.Medication,
                 label = "用药",
@@ -2093,6 +2748,7 @@ private fun BeautifulQuickActions(
                 onClick = onMedicationClick,
                 modifier = Modifier.weight(1f)
             )
+            // 饮食记录按钮
             QuickActionButton(
                 icon = Icons.Default.Restaurant,
                 label = "饮食",
@@ -2407,29 +3063,28 @@ private fun SmallNutritionItem(
 }
 
 /**
- * 美化的血糖预测卡片 - 动态渐变色
+ * 美化的血糖预测卡片 - 支持AI预测与纠正
  */
 @Composable
 private fun BeautifiedBloodGlucosePredictionCard(
     dailyRecommendation: DailyNutritionRecommendation?,
     todayIntake: TodayNutritionIntake?,
-    homeViewModel: HomeViewModel
+    waterSummary: com.diabeat.data.model.TodayWaterSummary?,
+    exerciseSummary: com.diabeat.data.model.TodayExerciseSummary?,
+    medicationSummary: com.diabeat.data.model.TodayMedicationSummary?,
+    mealRecords: List<MealRecordResponse>,
+    prediction: BloodGlucosePredictionResponse?,
+    corrections: List<BloodGlucoseCorrectionResponse>,
+    onPredictClick: () -> Unit,
+    onCorrectionClick: () -> Unit,
+    onRefreshClick: () -> Unit = {},
+    isRefreshing: Boolean = false
 ) {
-    val exerciseSummary by homeViewModel.exerciseSummary.collectAsState()
-    val waterSummary by homeViewModel.waterSummary.collectAsState()
-    val mealRecords by homeViewModel.mealRecords.collectAsState()
-    
-    val predictedBloodGlucose = remember(todayIntake, exerciseSummary, waterSummary, mealRecords) {
+    val fallbackPrediction = remember(todayIntake, waterSummary, mealRecords) {
         if (todayIntake != null && dailyRecommendation != null) {
             val baseGlucose = 5.6f
             val carbsIntake = todayIntake.total_carbs
             val glucoseFromCarbs = carbsIntake / 15f
-            val exerciseCalories = exerciseSummary?.total_calories ?: 0f
-            val glucoseReductionFromExercise = when {
-                exerciseCalories < 150f -> exerciseCalories / 300f
-                exerciseCalories < 300f -> 0.5f + (exerciseCalories - 150f) / 300f
-                else -> 1.0f + (exerciseCalories - 300f).coerceAtMost(200f) / 200f
-            }
             val waterIntake = waterSummary?.total_ml?.toFloat() ?: 2000f
             val waterFactor = when {
                 waterIntake >= 2000f -> 1.0f
@@ -2437,25 +3092,53 @@ private fun BeautifiedBloodGlucosePredictionCard(
                 else -> 0.9f
             }
             val timeDecayFactor = calculateTimeDecay(mealRecords.firstOrNull()?.meal_time)
-            val predicted = baseGlucose + 
-                (glucoseFromCarbs * timeDecayFactor * waterFactor) - 
-                glucoseReductionFromExercise
+            val predicted = baseGlucose +
+                (glucoseFromCarbs * timeDecayFactor * waterFactor)
             predicted.coerceIn(3.9f, 11.1f)
         } else {
             5.6f
         }
     }
     
-    // 根据血糖值动态选择颜色
+    val latestCorrection = corrections.firstOrNull()
+    
+    // 调试日志
+    android.util.Log.d("BloodGlucoseCard", "corrections数量: ${corrections.size}")
+    android.util.Log.d("BloodGlucoseCard", "latestCorrection: ${latestCorrection?.actual_value}")
+    android.util.Log.d("BloodGlucoseCard", "prediction当前值: ${prediction?.predictions?.firstOrNull()?.bg_value}")
+    android.util.Log.d("BloodGlucoseCard", "fallback: $fallbackPrediction")
+    
+    // 显示当前血糖值：优先使用实测值 > 预测的起始值 > fallback
+    val displayValue = when {
+        // 如果有实测数据，显示最新的实测值
+        latestCorrection != null -> {
+            android.util.Log.d("BloodGlucoseCard", "使用实测值: ${latestCorrection.actual_value}")
+            latestCorrection.actual_value
+        }
+        // 如果有预测数据，显示预测的第一个点（当前血糖）
+        prediction != null && prediction.predictions.isNotEmpty() -> {
+            val value = prediction.predictions.first().bg_value
+            android.util.Log.d("BloodGlucoseCard", "使用预测当前值: $value")
+            value
+        }
+        // 否则使用fallback
+        else -> {
+            android.util.Log.d("BloodGlucoseCard", "使用fallback: $fallbackPrediction")
+            fallbackPrediction
+        }
+    }
+    
+    android.util.Log.d("BloodGlucoseCard", "最终displayValue: $displayValue")
+    
     val glucoseColors = when {
-        predictedBloodGlucose < 3.9f -> listOf(Color(0xFFFF9800), Color(0xFFFF5722)) // 橙红
-        predictedBloodGlucose > 7.8f -> listOf(Color(0xFFEF5350), Color(0xFFE91E63)) // 红粉
-        else -> listOf(Color(0xFF66BB6A), Color(0xFF4CAF50)) // 绿色
+        displayValue < 3.9f -> listOf(Color(0xFFFF9800), Color(0xFFFF5722))
+        displayValue > 7.8f -> listOf(Color(0xFFEF5350), Color(0xFFE91E63))
+        else -> listOf(Color(0xFF66BB6A), Color(0xFF4CAF50))
     }
     
     val glucoseStatus = when {
-        predictedBloodGlucose < 3.9f -> "偏低"
-        predictedBloodGlucose > 7.8f -> "偏高"
+        displayValue < 3.9f -> "偏低"
+        displayValue > 7.8f -> "偏高"
         else -> "正常"
     }
     
@@ -2494,79 +3177,226 @@ private fun BeautifiedBloodGlucosePredictionCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "预测血糖值",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "基于今日数据综合分析",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "当前血糖值",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = when {
+                                    latestCorrection != null -> "实测值"
+                                    prediction != null -> "AI预测当前值"
+                                    else -> "基于今日数据估算"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        // 手动刷新按钮
+                        IconButton(
+                            onClick = onRefreshClick,
+                            enabled = !isRefreshing,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            if (isRefreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "刷新预测",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                     
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = glucoseColors[0].copy(alpha = 0.2f)
+                        shape = RoundedCornerShape(16.dp),
+                        color = glucoseColors[0].copy(alpha = 0.15f)
                     ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+                            horizontalAlignment = Alignment.End
+                        ) {
+                            Text(
+                                text = String.format("%.1f", displayValue),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = glucoseColors[0]
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (prediction != null) prediction.risk_level.uppercase() else glucoseStatus,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = glucoseColors[1]
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
                         Text(
-                            text = glucoseStatus,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = glucoseColors[0]
+                            text = "本日碳水",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${todayIntake?.total_carbs?.roundToInt() ?: 0} g",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "水分摄入",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${waterSummary?.total_ml ?: 0} ml",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
-                // 血糖值显示
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
+                if (prediction != null && prediction.predictions.isNotEmpty()) {
+                    // 调试日志
+                    android.util.Log.d("PredictionCurve", "显示预测曲线，prediction_id=${prediction.prediction_id}, 点数=${prediction.predictions.size}")
+                    prediction.predictions.take(4).forEachIndexed { index, point ->
+                        android.util.Log.d("PredictionCurve", "点$index: ${point.time_minutes}分钟 = ${point.bg_value}")
+                    }
+                    
+                    // 计算趋势说明
+                    val trendExplanation = remember(mealRecords, medicationSummary, prediction) {
+                        calculateTrendExplanation(
+                            mealRecords = mealRecords,
+                            medicationSummary = medicationSummary,
+                            prediction = prediction
+                        )
+                    }
+                    
                     Text(
-                        text = String.format("%.1f", predictedBloodGlucose),
-                        style = MaterialTheme.typography.displayLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = glucoseColors[0]
+                        text = "预测曲线（部分节点）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
+                    
+                    // 趋势说明 - 小字体
+                    if (trendExplanation.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = trendExplanation,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        prediction.predictions.take(4).forEach { point ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "${point.time_minutes} 分钟",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${String.format("%.1f", point.bg_value)} mmol/L",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                } else {
                     Text(
-                        text = "mmol/L",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        text = "点击“AI预测”获取更精准的血糖变化曲线。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (latestCorrection != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "实测 ${String.format("%.1f", latestCorrection.actual_value)} mmol/L",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "预测 ${String.format("%.1f", latestCorrection.predicted_value)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "偏差 ${String.format("%.1f", latestCorrection.difference)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (latestCorrection.difference >= 0) Color(0xFFD32F2F) else Color(0xFF388E3C),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "暂无纠正记录，记录一次实测血糖可帮助模型自适应。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // 提示信息
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Button(
+                        onClick = onPredictClick,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = glucoseColors[0]
+                        )
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
+                        Text("AI预测", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = onCorrectionClick,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.White.copy(alpha = 0.7f)
                         )
-                        Text(
-                            text = "预测基于碳水、运动、水分综合计算，仅供参考",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 18.sp
-                        )
+                    ) {
+                        Text("提交纠正", fontWeight = FontWeight.Bold)
                     }
                 }
             }

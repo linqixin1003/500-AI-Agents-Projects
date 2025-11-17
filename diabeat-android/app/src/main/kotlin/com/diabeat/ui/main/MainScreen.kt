@@ -39,6 +39,7 @@ fun MainScreen(
     homeViewModel: HomeViewModel,
     onNavigateToCamera: (mealType: String?) -> Unit, // 修改为接受餐次类型参数
     onNavigateToFoodSearch: () -> Unit,
+    onNavigateToBarcodeScanner: () -> Unit = {},  // ✅ 添加条形码扫描导航
     onNavigateToSettings: () -> Unit,
     onNavigateToProfile: () -> Unit
 ) {
@@ -55,7 +56,8 @@ fun MainScreen(
                     0 -> NewHomeScreen(
                         homeViewModel = homeViewModel,
                         onNavigateToCamera = onNavigateToCamera,
-                        onNavigateToFoodSearch = onNavigateToFoodSearch
+                        onNavigateToFoodSearch = onNavigateToFoodSearch,
+                        onNavigateToBarcodeScanner = onNavigateToBarcodeScanner  // ✅ 传递回调
                     )
                     1 -> MineScreen(
                         onNavigateToSettings = onNavigateToSettings,
